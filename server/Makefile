@@ -7,7 +7,7 @@ CPPFLAGS += -I ../include
 ALL := ser raw
 all:$(ALL)
 
-ser:server.o rawDevice.o
+ser:server.o rawDevice.o virtualDevice.o
 	$(CC) -o $@ $^ $(LIBEV) -lm
 
 raw:rawDevice.o	raw.o

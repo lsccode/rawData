@@ -33,27 +33,33 @@ typedef struct tagFrame
     unsigned int w;
     unsigned int h;
     unsigned int frameSize;
+    unsigned int offset;
     char *frameAddr;
+    char *phyAddr;
 }tFrame;
+
+typedef struct tagFrameArray
+{
+    unsigned int size;
+    unsigned int cap;
+    tFrame **ppstFrame;
+    char *name;
+    pthread_mutex_t mutex;
+}tFrameArray;
 
 typedef struct sensor_msg_rawbuf tSensorMsgRawBuf;
 typedef struct tagRawInfo
 {
     int rawfd;
     int memfd;
-    char *devName;
+    char *memDev;
+    char *rawDev;
     unsigned int w;
     unsigned int h;
     unsigned int rawFrameSize;
     
-    unsigned int frameConfigNumber;
-    char *frameConfigBuf[M_DEFAULT_RAW_CONFIG_NMBER];
-    
-    unsigned int frameUsedNumber;
-    char *frameUsedBuf[M_DEFAULT_RAW_CONFIG_NMBER];
-    
-    unsigned int frameFreeNumber;
-    tSensorMsgRawBuf stzSensorMsgRawBuf[M_DEFAULT_RAW_CONFIG_NMBER + M_INIT_FRAME_FREE_NUMB];
+    tFrameArray stEmptyArray;
+    tFrameArray stUsedArray;
     
     char *mapStartAddr;
 }tRawInfo;
@@ -62,13 +68,14 @@ typedef struct tagRawOpr
 {
     tRawInfo stRawInfo;
     int (*open)(tRawInfo *pstRawInfo);
-    int (*read)(tRawInfo *pstRawInfo,tFrame *pstFrame);
+    int (*read)(tRawInfo *pstRawInfo);
+    int (*get)(tRawInfo *pstRawInfo,tFrame **ppstFrame);
     int (*write)(tRawInfo *pstRawInfo,tFrame *pstFrame);
     int (*close)(tRawInfo *pstRawInfo);
 }tRawOpr;
 
 
 tRawOpr* creatDevice();
-
+tRawOpr* creatVirtualDevice();
 
 #endif

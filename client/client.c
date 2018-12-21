@@ -3,7 +3,9 @@
 #include <pthread.h>
 
 #define M_FRAME_RATE (25)
-#define M_LIST_NUMBER (7)
+#define M_LIST_NUMBER (20)
+#define M_DEFAULT_FRAME_BUF_SIZE (20*1024*1024)
+#define M_DEFAULT_FRAME_BUF_CALL (M_DEFAULT_FRAME_BUF_SIZE + 4*1024*1024)
 
 typedef struct tagFrameBuf
 {
@@ -13,131 +15,110 @@ typedef struct tagFrameBuf
     char *buf;
 }tFrameBuf;
 
-typedef struct tagFrameList
+typedef struct tagFrameNode tFrameNode;
+struct tagFrameNode
 {
-    unsigned ulFrameNumber;
-    unsigned ulCap;
-    char     szFileName[128];
-    tFrameBuf *ppstFrameBuf[M_FRAME_RATE];
-}tFrameList;
+    tFrameBuf *pstFrameBuf;
+    tFrameNode *pstNext;
+};
 
-typedef struct tagFrameLList
+typedef struct tagFrameList tFrameList;
+struct tagFrameList
 {
-    unsigned int ulListNumber;
-    unsigned ulCap;
-    tFrameList *ppstList[M_LIST_NUMBER];
     pthread_mutex_t mutex;
-}tFrameLList;
+    tFrameNode *pstHead;
+    tFrameNode *pstTail;
+};
 
 typedef struct tagAcClientData
 {
-//    tFrameBuf *pstFrameBuf;
-    tFrameList *pstFrameList;
-    tFrameLList stFreeFrameLList;
-    tFrameLList stUsedFrameLList;
-    tClientInfo stClient;    
+    tFrameNode *pstFrameNode;
+    tFrameList stFrameFreeList;
+    tFrameList stFrameUsedList;
+    tClientInfo stClient;
+    char     szFileName[128];
+    int fd;
 }tAcClientData;
 
-tFrameBuf *createFrameBuf(unsigned int cap)
+int addtoFrameList(tFrameList *pstList,tFrameNode *pstNode);
+int createFrameList(tFrameList *pstFrameList)
 {
-    tFrameBuf *pstFrameBuf = (tFrameBuf *)calloc(1,sizeof(tFrameBuf));
-    char *buf              =  (char *)calloc(cap,sizeof(char));
-    
-    if(NULL == pstFrameBuf || NULL == buf)
+    unsigned int index = 0;
+
+    if(NULL == pstFrameList)
     {
-        free(pstFrameBuf);
-        free(buf);
-        return NULL;
+        debug("calloc pstFrameList error \n");
+        return -1;
     }
     
-    pstFrameBuf->size   = 0;
-    pstFrameBuf->offset = 0;
-    pstFrameBuf->cap    = cap;
-    pstFrameBuf->buf    = buf;
-    
-    return pstFrameBuf;
-}
-
-tFrameList* creatList()
-{
-    unsigned index = 0;
-    tFrameList *pstFrameList = (tFrameList *)calloc(1,sizeof(tFrameList));
-    
-    pstFrameList->ulFrameNumber = 0;
-    pstFrameList->ulCap         = M_FRAME_RATE;
-    
-    for(index = 0;index < pstFrameList->ulCap; ++index)
+    for(index = 0 ;index < M_LIST_NUMBER; ++index)
     {
-        pstFrameList->ppstFrameBuf[index] = createFrameBuf(M_MAX_FRAME_SIZE);
-        debug("pstFrameList->ppstFrameBuf[index] %p\n",pstFrameList->ppstFrameBuf[index]);
-    }
-    
-    return pstFrameList;
-}
-
-void initLList(tFrameLList *pstLList,unsigned cap,unsigned flag)
-{
-    unsigned index = 0;
-    
-    cap = cap < M_LIST_NUMBER ? cap : M_LIST_NUMBER;
-    
-    pthread_mutex_init(&pstLList->mutex,NULL);
-    pstLList->ulListNumber = 0;
-    pstLList->ulCap        = cap;
-    
-    if(flag)
-    {
-        for(index = 0;index < cap; ++index)
+        tFrameNode *pstNode = (tFrameNode *)calloc(1,sizeof(tFrameNode));
+        tFrameBuf *pstBuf = (tFrameBuf *)calloc(1,sizeof(tFrameBuf));
+        char *buf = (char *)calloc(1,M_DEFAULT_FRAME_BUF_CALL);
+        if(NULL == pstNode || NULL == pstBuf || NULL == buf)
         {
-            pstLList->ppstList[index] = creatList();
-            debug("init List = %p\n",pstLList->ppstList[index]);
+            debug("create node error!\n");
+            free(pstNode);
+            free(pstBuf);
+            free(buf);
+            return -1;
         }
-        pstLList->ulListNumber = cap;
-    }
-
-    return ;
-    
+        pstBuf->size = 0;
+        pstBuf->offset = 0;
+        pstBuf->cap = M_DEFAULT_FRAME_BUF_SIZE;
+        pstBuf->buf = buf;
+        pstNode->pstFrameBuf = pstBuf;
+        pstNode->pstNext = NULL;
+        addtoFrameList(pstFrameList,pstNode);  
+    }   
+    return 0;
 }
 
-void addToLList(tFrameLList *pstFrameLList,tFrameList *pstFrameList)
+int addtoFrameList(tFrameList *pstList,tFrameNode *pstNode)
 {
-    unsigned int ulListNumber;
-    pthread_mutex_lock(&pstFrameLList->mutex);
-    ulListNumber = pstFrameLList->ulListNumber;
-    if(ulListNumber == M_LIST_NUMBER)
+    if(NULL == pstList || NULL == pstNode)
     {
-        debug("full return ... \n");
-        pthread_mutex_unlock(&pstFrameLList->mutex);
-        return;
+        debug("pstList = %p,pstNode = %p\n",pstList,pstNode);
+        return -1;
     }
-    pstFrameLList->ppstList[ulListNumber] = pstFrameList;
-    ++pstFrameLList->ulListNumber;
-    
-    pthread_mutex_unlock(&pstFrameLList->mutex);
-    
-    return;
+
+    pthread_mutex_lock(&pstList->mutex);
+
+    pstNode->pstNext = NULL;
+    if( NULL != pstList->pstTail)
+    {
+        pstList->pstTail->pstNext = pstNode;                
+    }
+    else
+    {
+        pstList->pstHead = pstNode;
+    }
+    pstList->pstTail = pstNode;
+    pthread_mutex_unlock(&pstList->mutex);
+    return 0;
 }
 
-void getFromLList(tFrameLList *pstFrameLList,tFrameList **ppstFrameList)
+int getFromFrameList(tFrameList *pstList,tFrameNode **ppstNode)
 {
-    unsigned int ulListNumber;
-    pthread_mutex_lock(&pstFrameLList->mutex);
-    ulListNumber = pstFrameLList->ulListNumber;
-    if(ulListNumber == 0)
+    if(NULL == pstList || NULL == ppstNode)
     {
-        *ppstFrameList = NULL;
-        //debug("empty return ... \n");
-        pthread_mutex_unlock(&pstFrameLList->mutex);
-        return;     
+        debug("pstList = %p,ppstNode = %p\n",pstList,ppstNode);
+        return -1;
     }
+    pthread_mutex_lock(&pstList->mutex);
+    *ppstNode = pstList->pstHead;
     
-    *ppstFrameList = pstFrameLList->ppstList[0];
-    --pstFrameLList->ulListNumber;
-    memmove(pstFrameLList->ppstList,&pstFrameLList->ppstList[1], pstFrameLList->ulListNumber * sizeof(tFrameList *));  
-   
-    pthread_mutex_unlock(&pstFrameLList->mutex);
-    //debug("get List = %p\n",*ppstFrameList);
-    return;
+    if(pstList->pstHead)
+    {        
+        pstList->pstHead = pstList->pstHead->pstNext;  
+        if(pstList->pstHead == NULL)
+        {
+            pstList->pstTail = NULL;
+        }
+    }
+    pthread_mutex_unlock(&pstList->mutex);
+    return 0;
 }
 
 // getLocalTimeStr ignore error and null check
@@ -208,48 +189,6 @@ void saveFrameBuf2File(tFrameBuf *pstFrameBuf)
     close(savefd);
 }
 
-void sinkFrameList(tFrameList *pstFrameList)
-{   
-    unsigned int index = 0;
-    static int savefd = -1;
-    
-    if(savefd < 0)
-    {
-        savefd = open(pstFrameList->szFileName,O_WRONLY | O_CREAT);
-        if(savefd < 0)
-        {
-            debug("open %s error,sink error!\n",pstFrameList->szFileName);
-            return ;
-        }  
-    }
-    
-    for(index = 0; index < pstFrameList->ulFrameNumber; ++index)
-    {
-        tFrameBuf *pstFrameBuf = pstFrameList->ppstFrameBuf[index];
-        
-        int wr = write(savefd,pstFrameBuf->buf,pstFrameBuf->size);
-        
-        if(wr != pstFrameBuf->size)
-        {
-            debug("write error!\n");
-            close(savefd);
-            savefd = -1;
-            return;
-        }
-        
-        pstFrameBuf->offset = 0;
-        pstFrameBuf->size   = 0;
-    }
-    
-    fsync(savefd);
- //   close(savefd);
-
-    pstFrameList->szFileName[0] = 0;
-    pstFrameList->ulFrameNumber = 0;
-
-    return;
-}
-
 int recvOnePacket(int fd,char* buf,unsigned int length)
 {
     int read = 0;
@@ -281,81 +220,67 @@ int recvOnePacket(int fd,char* buf,unsigned int length)
 }
 
 void clientRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
-{
-    char buffer[32] = {0};    
+{    
     tAcClientData *pstAcClientData = (tAcClientData *)watcher->data;
     if(pstAcClientData == NULL)
     {
         debug("client data error!");
         return;
     }
-    tFrameList *pstFrameList = pstAcClientData->pstFrameList;
-    tFrameBuf *pstFrameBuf = NULL;
     
-    if(pstFrameList == NULL)
+    tFrameBuf *pstFrameBuf = NULL;
+    if(pstAcClientData->pstFrameNode == NULL)
     {
-        debug("free list number %u!\n",pstAcClientData->stFreeFrameLList.ulListNumber);
-        getFromLList(&pstAcClientData->stFreeFrameLList,&pstAcClientData->pstFrameList); 
-        if(NULL == pstAcClientData->pstFrameList)
-        {
-            debug("List NULL ,error !\n");
-            return;
-        }
-        pstFrameList = pstAcClientData->pstFrameList;
-        //debug("pstFrameList %p, number %u!\n",pstFrameList,pstFrameList->ulFrameNumber);
+        //debug("get from free list\n");
+        getFromFrameList(&pstAcClientData->stFrameFreeList, &pstAcClientData->pstFrameNode);
     }
     
-    pstFrameBuf = pstFrameList->ppstFrameBuf[pstFrameList->ulFrameNumber];
-    //debug("pstFrameBuf %p\n",pstFrameBuf);
+    if(pstAcClientData->pstFrameNode)
+    {
+        pstFrameBuf = pstAcClientData->pstFrameNode->pstFrameBuf;
+    }
+    
+    if(NULL == pstFrameBuf)
+    {
+        debug("buf error!\n");
+        return;
+    }
     
     if(revents & EV_READ)
     {
-        tNetMsg *pstNetMsg = (tNetMsg *)buffer;
-        ssize_t read = recv(watcher->fd, buffer, sizeof(tNetMsg), 0);
-        //debug("succeed type(%d)!\n",pstNetMsg->ulMsgType);
-        if(read == sizeof(tNetMsg))
+        ssize_t read = recv(watcher->fd, pstFrameBuf->buf + pstFrameBuf->offset, M_PACKET_SIZE, 0);
+        
+        //if(pstFrameBuf->offset%(1500*100) == 0)
+        //    debug("pstFrameBuf->offset = %u,pstFrameBuf->cap = %u\n",pstFrameBuf->offset,pstFrameBuf->cap);
+        if(read > 0)
         {
-            //read = recv(watcher->fd, pstFrameBuf->buf + pstFrameBuf->offset,pstNetMsg->ulMsgLen, 0);
-            read = recvOnePacket(watcher->fd,pstFrameBuf->buf + pstFrameBuf->offset,pstNetMsg->ulMsgLen);
-            if(read == pstNetMsg->ulMsgLen)
-            {
-                
-                pstFrameBuf->offset += read;
-                if(pstNetMsg->ulMsgType == M_FRAME_END)
-                {
-                    pstFrameBuf->size = pstFrameBuf->offset;
-                    ++pstFrameList->ulFrameNumber;
-                   
-                }
-                
-                if(pstFrameList->ulFrameNumber == M_FRAME_RATE)
-                {   
-                    getLocalTimeStr(pstFrameList->szFileName);                    
-                    addToLList(&pstAcClientData->stUsedFrameLList,pstFrameList);
-                    debug("used list number %u!\n",pstAcClientData->stUsedFrameLList.ulListNumber);
-                    pstAcClientData->pstFrameList = NULL;
-                }
-            }
-            else
-            {
-                debug("packet broken recv(%d) length(%d),error(%d:%s)!\n",read,pstNetMsg->ulMsgLen,errno,strerror(errno));
-            }
- 
+            pstFrameBuf->offset += read;
+        }
+        else if(read < 0 && ( errno == EINTR || errno == EAGAIN ))
+        {
+            debug("read(%d) ,error(%d:%s)!\n",read,errno,strerror(errno));
+            return;
         }
         else if(read <= 0)
         {
             tClientInfo  *pstClient = &pstAcClientData->stClient;
             close(watcher->fd);
-            ev_io_stop(loop, watcher);           
+            ev_io_stop(loop, watcher); 
         }
-        else
+        
+        if(pstFrameBuf->offset >= pstFrameBuf->cap)
         {
-            debug("read != sizeof(tNetMsg)\n");
+            //debug("add to used list\n");
+            pstFrameBuf->size = pstFrameBuf->offset;
+            addtoFrameList(&pstAcClientData->stFrameUsedList,pstAcClientData->pstFrameNode);
+            pstAcClientData->pstFrameNode = NULL;
         }
+        
     }
     
     if(revents & EV_WRITE)
     {
+        char buffer[32] = {0};
         tNetMsg *pstNetMsg = (tNetMsg *)buffer;
         
         pstNetMsg->ulMsgType = M_START_RAW;
@@ -372,8 +297,6 @@ void clientRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
             debug("send start message ok!\n");
         }
     }
-    
- 
 }
 
 void sigpipe(int sig)
@@ -396,22 +319,52 @@ void signalCallback(EV_P_ ev_signal *w, int revents)
     }
 }
 
+void sinkFrameNode(int fd,tFrameNode *pstFrameNode)
+{
+    if(NULL == pstFrameNode || NULL == pstFrameNode->pstFrameBuf)
+        return;
+    
+    tFrameBuf *pstFrameBuf = pstFrameNode->pstFrameBuf;
+    
+    if(write(fd,pstFrameBuf->buf,pstFrameBuf->size) != pstFrameBuf->size)
+    {
+        debug("write error!\n");
+        pstFrameBuf->size = 0;
+        pstFrameBuf->offset = 0;
+        return;
+    }
+    fsync(fd);
+    
+    pstFrameBuf->size = 0;
+    pstFrameBuf->offset = 0;
+    return;
+}
+
 void sinkCallback (EV_P_ ev_timer *w, int revents)
 {
 	//debug("sink 1s frame ... \n");
     tAcClientData *pstAcClientData = (tAcClientData *)w->data;
-    
-    tFrameList *pstFrameList = NULL;
-    debug("used list size %u\n",pstAcClientData->stUsedFrameLList.ulListNumber);
-    getFromLList(&pstAcClientData->stUsedFrameLList,&pstFrameList); 
-    
-    if(pstFrameList)
+    tFrameNode *pstFrameNode = NULL;
+    if(pstAcClientData->fd == 0)
     {
+        getLocalTimeStr(pstAcClientData->szFileName);  
+        pstAcClientData->fd = open(pstAcClientData->szFileName,O_WRONLY | O_CREAT);
         
-        sinkFrameList(pstFrameList);
-        addToLList(&pstAcClientData->stFreeFrameLList,pstFrameList);
-        debug("free list size %u\n",pstAcClientData->stFreeFrameLList.ulListNumber);
-        
+        if(pstAcClientData->fd < 0)
+        {
+            debug("create sink file error!\n");
+            return;
+        }       
+    }
+    
+    
+    getFromFrameList(&pstAcClientData->stFrameUsedList,&pstFrameNode);
+    
+    if(pstFrameNode)
+    {
+        //debug("sink one node\n");
+        sinkFrameNode(pstAcClientData->fd,pstFrameNode);
+        addtoFrameList(&pstAcClientData->stFrameFreeList,pstFrameNode);
     }
     
     return;
@@ -453,9 +406,13 @@ int main(int argc, char *argv[])
         return -1;
     }
     
-    initLList(&stAcClientData.stFreeFrameLList,M_LIST_NUMBER,1);
-    initLList(&stAcClientData.stUsedFrameLList,M_LIST_NUMBER,0);
-    
+    pthread_mutex_init(&stAcClientData.stFrameFreeList.mutex,NULL);
+    pthread_mutex_init(&stAcClientData.stFrameUsedList.mutex,NULL);
+    debug("\n");
+    createFrameList(&stAcClientData.stFrameFreeList);
+    debug("\n");
+
+    debug("\n");
     getpeername(sockfd, (struct sockaddr *)&addr, &len);
     inet_ntop(AF_INET,&(addr.sin_addr),stAcClientData.stClient.ipaddr,sizeof(stAcClientData.stClient.ipaddr)); 
     stAcClientData.stClient.port = ntohs(addr.sin_port);

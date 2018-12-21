@@ -16,16 +16,22 @@ int main()
     
     while(1)
     {
-        tFrame stFrame;
+        tFrame *pstFrame;
         
-        if(pstRawDevice->read(&pstRawDevice->stRawInfo,&stFrame) < 0)
+        if(pstRawDevice->read(&pstRawDevice->stRawInfo) < 0)
         {
             debug("read error!\n");           
         }
+        
+        if(pstRawDevice->get(&pstRawDevice->stRawInfo,&pstFrame) < 0)
+        {
+            debug("read error!\n");           
+        }
+        
         else
         {
-            debug("read one frame, addr = %p,size = %u\n",stFrame.frameAddr,stFrame.frameSize);
-            pstRawDevice->write(&pstRawDevice->stRawInfo,&stFrame);
+            debug("read one frame, addr = %p,size = %u\n",pstFrame->frameAddr,pstFrame->frameSize);
+            pstRawDevice->write(&pstRawDevice->stRawInfo,pstFrame);
         }   
     }
     
