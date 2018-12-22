@@ -6,6 +6,7 @@
 
 int main()
 {
+    unsigned count = 1;
     tRawOpr *pstRawDevice = creatDevice();
     
     if(pstRawDevice->open(&pstRawDevice->stRawInfo) < 0)
@@ -13,6 +14,10 @@ int main()
         debug("open error!\n");
         return -1;
     }
+    
+    debug("\n""############################### \n"
+          " raw start (%s-%s) \n"
+          "###############################\n",__DATE__,__TIME__);
     
     while(1)
     {
@@ -30,11 +35,17 @@ int main()
         
         else
         {
-            debug("read one frame, addr = %p,size = %u\n",pstFrame->frameAddr,pstFrame->frameSize);
+            debug("read one frame, virtual addr (%p), phy addr (%p),size = %u\n",
+                  pstFrame->frameAddr,pstFrame->phyAddr,pstFrame->frameSize);
             pstRawDevice->write(&pstRawDevice->stRawInfo,pstFrame);
         }   
+        ++count;
+        if(count % 100 == 0)
+        {
+            debug("get %u \n",count);
+        }
     }
-    
+    debug("\n");
     pstRawDevice->close(&pstRawDevice->stRawInfo);
 }
 

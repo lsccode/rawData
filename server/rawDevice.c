@@ -59,12 +59,14 @@ static int addTOArray(tFrameArray *pstFrameArray,tFrame *pstFrame)
     
     if(pstFrameArray->size == pstFrameArray->cap)
     {
-        debug("full error!\n");
+        //debug("add to (%s) size(%u),cap(%u),full error!\n",pstFrameArray->name,pstFrameArray->size,pstFrameArray->cap);
+        ++pstFrameArray->addfailed;
         return -1;
     }
-    
+    pthread_mutex_lock(&pstFrameArray->mutex);
     pstFrameArray->ppstFrame[pstFrameArray->size] = pstFrame;
     ++pstFrameArray->size;
+    pthread_mutex_unlock(&pstFrameArray->mutex);
     
     return 0;   
 }
@@ -81,10 +83,12 @@ static int getFromArray(tFrameArray *pstFrameArray,tFrame **ppstFrame,int random
     if(pstFrameArray->size == 0)
     {       
         *ppstFrame = NULL;
-        debug("full error!\n");
+        ++pstFrameArray->getfailed;
+        //debug("get from (%s) size (%d),empty error!\n",pstFrameArray->name,pstFrameArray->size);
         return -1;
     }
     
+    pthread_mutex_lock(&pstFrameArray->mutex);
     if(random)
     {
         *ppstFrame = pstFrameArray->ppstFrame[pstFrameArray->size - 1];
@@ -96,7 +100,7 @@ static int getFromArray(tFrameArray *pstFrameArray,tFrame **ppstFrame,int random
         --pstFrameArray->size;
         memmove(pstFrameArray->ppstFrame,&pstFrameArray->ppstFrame[1],pstFrameArray->size * sizeof(tFrame*));
     }
-      
+    pthread_mutex_unlock(&pstFrameArray->mutex);  
     return 0;   
 }
 
@@ -139,6 +143,7 @@ static int openDevice(tRawInfo *pstRawInfo)
         debug("memmapDevice error!\n");
         return -1;
     }
+    
     pstRawInfo->rawfd = open(pstRawInfo->rawDev, O_RDWR | O_SYNC);
     if(pstRawInfo->rawfd < 0)
     {
@@ -159,23 +164,23 @@ static int openDevice(tRawInfo *pstRawInfo)
 	}
     
     pstSensorRawBuf->rawbuf_addr = M_MAP_PHY_ADDR;
-    pstSensorRawBuf->rawbuf_size = pstRawInfo->rawFrameSize * M_DEFAULT_RAW_CONFIG_NMBER;
-    pstSensorRawBuf->queue_num   = M_DEFAULT_RAW_CONFIG_NMBER;
+    pstSensorRawBuf->rawbuf_size = pstRawInfo->rawFrameSize * pstRawInfo->rawBufNum;
+    pstSensorRawBuf->queue_num   = pstRawInfo->rawBufNum;
     stSensorMsg.header.msg_id = SENSOR_IO_MSG_SET_RAWBUF;
     stSensorMsg.header.msg_length = sizeof(struct sensor_msg_rawbuf);
     if (ioctl(pstRawInfo->rawfd, SENSOR_IO_MSG_CMD, &stSensorMsg) < 0 ) {
 		debug("failed to set map table: %s\n", strerror(errno));
 		return -1;
 	}
-    
-    pstSensorStart->sensor    = 0;    
+
+    pstSensorStart->sensor    = SENSOR_TYPE_A;    
     stSensorMsg.header.msg_id = SENSOR_IO_MSG_START;
     stSensorMsg.header.msg_length = sizeof(struct sensor_msg_start);
     if (ioctl(pstRawInfo->rawfd, SENSOR_IO_MSG_CMD, &stSensorMsg) < 0 ) {
 		debug("failed to set map table: %s\n", strerror(errno));
 		return -1;
 	}                               
-	
+
     return 0;
 }
 
@@ -192,17 +197,18 @@ static int readDevice(tRawInfo *pstRawInfo)
     
     if(read(pstRawInfo->rawfd,&stMsgRaw,sizeof(stMsgRaw)) < 0)
     {
-        debug("read device error!");
+        debug("read device error (%s:%d)!\n",strerror(errno),errno);
+		return -1;
     }
     
     if( getFromArray(&pstRawInfo->stEmptyArray,&pstFrame,1) < 0 )
     {
         debug("get from %s error!\n",pstRawInfo->stEmptyArray.name);
         return -1;
-    }
+    }   
     
-    pstFrame->frameAddr = (char *)stMsgRaw.rawbuf_addr;
-    pstFrame->phyAddr   =  pstFrame->frameAddr - pstRawInfo->mapStartAddr + (char *)M_MAP_PHY_ADDR;
+    pstFrame->phyAddr   =  (char *)stMsgRaw.rawbuf_addr;
+    pstFrame->frameAddr = pstFrame->phyAddr - (char *)M_MAP_PHY_ADDR + pstRawInfo->mapStartAddr;
     pstFrame->frameSize = stMsgRaw.rawbuf_size;
     
     if(addTOArray(&pstRawInfo->stUsedArray,pstFrame) < 0)
@@ -257,7 +263,7 @@ static int getFrame(tRawInfo *pstRawInfo,tFrame **ppstFrame)
     tFrame *pstFrame = NULL;
     if( getFromArray(&pstRawInfo->stUsedArray,&pstFrame,0) < 0 )
     {
-        debug("get from %s error!\n",pstRawInfo->stEmptyArray.name);
+        debug("get from (%s) error!\n",pstRawInfo->stUsedArray.name);
         return -1;
     }
     
@@ -269,6 +275,20 @@ static int getFrame(tRawInfo *pstRawInfo,tFrame **ppstFrame)
 static int closeDevice(tRawInfo *pstRawInfo)
 {
     int ret = 0;
+    
+    struct sensor_io_msg sensor_msg;
+	struct sensor_msg_stop msg_stop;
+
+	sensor_msg.header.msg_id = SENSOR_IO_MSG_STOP;
+	sensor_msg.header.msg_length = sizeof(struct sensor_msg_stop);
+
+	msg_stop.sensor = SENSOR_TYPE_A;
+	memcpy(sensor_msg.data, &msg_stop, sizeof(struct sensor_msg_stop));
+
+	if (ioctl(pstRawInfo->rawfd, SENSOR_IO_MSG_CMD, &sensor_msg) < 0 ) {
+		debug("failed to set map table: %s\n", strerror(errno));
+		return -1;
+	}
     
     if(pstRawInfo->memfd > 0)
     {
@@ -294,9 +314,19 @@ static int closeDevice(tRawInfo *pstRawInfo)
             ret = -1;
             debug("close rawfd error!\n");
         }
+        pstRawInfo->rawfd = 0;
     }
     
 	return ret;
+}
+
+static int rawlog(tRawInfo *pstRawInf)
+{
+    debug("used  number (%u:%u), "
+          "empty number (%u:%u) \n",
+          pstRawInf->stUsedArray.cap,pstRawInf->stUsedArray.size,
+          pstRawInf->stEmptyArray.cap,pstRawInf->stEmptyArray.size  
+         );
 }
 
 tRawOpr* creatDevice()
@@ -311,17 +341,17 @@ tRawOpr* creatDevice()
    pstRawOpt->stRawInfo.w = 672;
    pstRawOpt->stRawInfo.h = 380;
    pstRawOpt->stRawInfo.rawFrameSize = pstRawOpt->stRawInfo.w * pstRawOpt->stRawInfo.h * 2;
+   pstRawOpt->stRawInfo.rawBufNum    = 60;
    
-   unsigned int cap = M_MAP_SIZE/pstRawOpt->stRawInfo.rawFrameSize;
-   
-   initArray(&pstRawOpt->stRawInfo.stEmptyArray,"empty array",cap,1);
-   initArray(&pstRawOpt->stRawInfo.stUsedArray,"used array",cap,0);
+   initArray(&pstRawOpt->stRawInfo.stEmptyArray,"empty array",pstRawOpt->stRawInfo.rawBufNum,1);
+   initArray(&pstRawOpt->stRawInfo.stUsedArray,"used array",pstRawOpt->stRawInfo.rawBufNum,0);
    
    pstRawOpt->open     = openDevice;
    pstRawOpt->read     = readDevice;
    pstRawOpt->get      = getFrame; 
    pstRawOpt->write    = writeDevice;
    pstRawOpt->close    = closeDevice;
+   pstRawOpt->log      = rawlog;
    
    return pstRawOpt;
 }

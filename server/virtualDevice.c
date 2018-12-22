@@ -11,7 +11,7 @@
 
 #define M_FRAME_W (1280)
 #define M_FRAME_H (720)
-#define M_FRAME_SIZE (M_FRAME_W*M_FRAME_H*2)
+#define M_FRAME_SIZE (M_FRAME_W*M_FRAME_H*3)
 
 static int initArray(tFrameArray *pstFrameArray,char *name,unsigned cap,unsigned int create)
 {
@@ -82,7 +82,8 @@ static int addTOArray(tFrameArray *pstFrameArray,tFrame *pstFrame)
     
     if(pstFrameArray->size == pstFrameArray->cap)
     {
-        debug("full error!\n");
+        //debug("(%s) full,size (%u),cap(%u)!\n",pstFrameArray->name,pstFrameArray->size,pstFrameArray->cap);
+        ++pstFrameArray->addfailed;
         return -1;
     }
     
@@ -104,7 +105,8 @@ static int getFromArray(tFrameArray *pstFrameArray,tFrame **ppstFrame,int random
     if(pstFrameArray->size == 0)
     {       
         *ppstFrame = NULL;
-        debug("full error!\n");
+        ++pstFrameArray->getfailed;
+        //debug("(%s) empty,size (%u)!\n",pstFrameArray->name);
         return -1;
     }
     
@@ -176,7 +178,7 @@ static int readDevice(tRawInfo *pstRawInfo)
     return 0;
 }
 
-int writeDevice(tRawInfo *pstRawInfo,tFrame *pstFrame)
+static int writeDevice(tRawInfo *pstRawInfo,tFrame *pstFrame)
 { 
     
     if(NULL == pstRawInfo || NULL == pstFrame)
@@ -197,7 +199,7 @@ int writeDevice(tRawInfo *pstRawInfo,tFrame *pstFrame)
     return 0;
 }
 
-int getFrame(tRawInfo *pstRawInfo,tFrame **ppstFrame)
+static int getFrame(tRawInfo *pstRawInfo,tFrame **ppstFrame)
 {
     if(NULL == pstRawInfo || NULL == ppstFrame)
     {
@@ -208,13 +210,22 @@ int getFrame(tRawInfo *pstRawInfo,tFrame **ppstFrame)
     tFrame *pstFrame = NULL;
     if( getFromArray(&pstRawInfo->stUsedArray,&pstFrame,0) < 0 )
     {
-        debug("get from (%s) error!\n",pstRawInfo->stUsedArray.name);
+        //debug("get from (%s) error!\n",pstRawInfo->stUsedArray.name);
         return -1;
     }
     
     *ppstFrame = pstFrame;
     
     return 0;   
+}
+
+static int rawlog(tRawInfo *pstRawInf)
+{
+    debug("used  number (%u:%u), "
+          "empty number (%u:%u) \n",
+          pstRawInf->stUsedArray.cap,pstRawInf->stUsedArray.size,
+          pstRawInf->stEmptyArray.cap,pstRawInf->stEmptyArray.size  
+         );
 }
 
 static int closeDevice(tRawInfo *pstRawInfo)
@@ -236,16 +247,16 @@ tRawOpr* creatVirtualDevice()
     pstRawOpt->stRawInfo.h = M_FRAME_H;
     pstRawOpt->stRawInfo.rawFrameSize = pstRawOpt->stRawInfo.w * pstRawOpt->stRawInfo.h * 2;
     
-    unsigned int cap = M_MAP_SIZE/pstRawOpt->stRawInfo.rawFrameSize;
+    pstRawOpt->stRawInfo.rawBufNum    = M_MAP_SIZE/pstRawOpt->stRawInfo.rawFrameSize;
     
-    initArray(&pstRawOpt->stRawInfo.stEmptyArray,"empty array",cap,1);
-    initArray(&pstRawOpt->stRawInfo.stUsedArray,"used array",cap,0);
+    initArray(&pstRawOpt->stRawInfo.stEmptyArray,"empty array",pstRawOpt->stRawInfo.rawBufNum,1);
+    initArray(&pstRawOpt->stRawInfo.stUsedArray,"used array",pstRawOpt->stRawInfo.rawBufNum,0);
     
     pstRawOpt->open     = openDevice;
     pstRawOpt->read     = readDevice;
     pstRawOpt->get      = getFrame; 
     pstRawOpt->write    = writeDevice;
     pstRawOpt->close    = closeDevice;
-    
+    pstRawOpt->log      = rawlog;
     return pstRawOpt;
 }

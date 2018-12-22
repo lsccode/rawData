@@ -1,9 +1,11 @@
+#include <pthread.h>
+
 #include "ev.h"
 #include "netcommon.h"
 #include "rawDevice.h"
 
 #define M_MAX_CLIENT_NUMBER (1)
-#define M_LOCAL_TEST
+//#define M_LOCAL_TEST
 
 typedef struct tagClientfdArray
 {
@@ -16,6 +18,7 @@ typedef struct tagServerData
     tClientfdArray sztClinet;
     tRawOpr *pstRawDevice;
     struct ev_io *evRawIO;
+    struct ev_loop *loop;
 }tServerData;
 
 typedef struct tagClientData
@@ -86,9 +89,9 @@ void passiveClientRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
         {
             pstNetMsg->ulMsgType = 10000;            
             pstClientData->start = 1;            
-            clock_gettime(CLOCK_MONOTONIC, &pstClientData->starttime);  
+            clock_gettime(CLOCK_MONOTONIC, &pstClientData->starttime); 
+            pstClientData->pstServerData->sztClinet.size = 1;
             
-            debug("get the message ulMsgType :%d\n",pstNetMsg->ulMsgType);
             debug("start send rawdata\n");
         }
         
@@ -120,14 +123,20 @@ void passiveClientWrite(struct ev_loop *loop, struct ev_io *watcher, int revents
 
         if(pstRawDevice->get(&pstRawDevice->stRawInfo,&pstClientData->pstFrame) < 0)
         {
-            debug("client get frame error!\n");
+            //if(pstRawDevice->stRawInfo.stUsedArray.getfailed % 100 == 0)
+                debug("client get from (%s) error,failed count(%u) !\n",
+                      pstRawDevice->stRawInfo.stUsedArray.name,pstRawDevice->stRawInfo.stUsedArray.getfailed);
+            //usleep(20);
+            ev_io_stop(loop, watcher);
+            ev_io_init(watcher, passiveClientRead, watcher->fd, EV_READ);
+            ev_io_start(loop, watcher);
             return;
         }              
     }
     
     pstFrame = pstClientData->pstFrame;
     curSend = pstFrame->frameSize - pstFrame->offset;
-    curSend = curSend > M_PACKET_SIZE ? M_PACKET_SIZE : curSend;
+    //curSend = curSend > M_PACKET_SIZE ? M_PACKET_SIZE : curSend;
     
     sd = write(watcher->fd,pstFrame->frameAddr + pstFrame->offset,curSend);
     if(sd > 0)
@@ -141,27 +150,38 @@ void passiveClientWrite(struct ev_loop *loop, struct ev_io *watcher, int revents
         ev_io_init(watcher, passiveClientRead, watcher->fd, EV_READ);
         ev_io_start(loop, watcher);
 
-        debug("write error %s:%d!\n",strerror(errno),errno);
+        debug("write error %s:%d, offset (%d),size (%u),curSend (%u)!\n",
+              strerror(errno),errno,pstFrame->offset,pstFrame->frameSize,curSend);
         return;
     }
     
     if(pstFrame->offset == pstFrame->frameSize)
     {    
         ++pstClientData->sendFrameNumber;
-        if(pstClientData->sendFrameNumber%20 == 0)
+        if(pstClientData->sendFrameNumber%100 == 0)
         {
             clock_gettime(CLOCK_MONOTONIC, &pstClientData->endtime);
             pstClientData->totaltime = 
                 (pstClientData->endtime.tv_sec * 1000 + pstClientData->endtime.tv_nsec/(1000*1000)) - 
                 (pstClientData->starttime.tv_sec * 1000 + pstClientData->starttime.tv_nsec/(1000*1000));
             double sec = pstClientData->totaltime*1.0/1000;
-            debug("total send (%llu MB ~= %llu B),sec (%f),Speed %f MB/s,Offset = %u,size = %u,fps = %f \n",
-                  pstClientData->totalsend/(1024*1024),pstClientData->totalsend,
-                  sec,
-                  pstClientData->totalsend/(sec*1024*1024),
-                  pstFrame->offset,pstFrame->frameSize,pstClientData->sendFrameNumber*1.0/sec);
+            debug("\ntotal send (%llu MB ~= %llu B),  "
+                  "offset (%u:%u),  "
+                  "%u/%.2f ~= %.2f MB/s, "
+                  "%u/%.2f ~= %.2f fps\n",
+                  pstClientData->totalsend/(1024*1024),pstClientData->totalsend,                 
+                  pstFrame->frameSize,pstFrame->offset,
+                  pstClientData->totalsend/(1024*1024),sec,pstClientData->totalsend/(sec*1024*1024),
+                  pstClientData->sendFrameNumber,sec,pstClientData->sendFrameNumber/sec);
+            pstRawDevice->log(&pstRawDevice->stRawInfo);
         }
-        pstRawDevice->write(&pstRawDevice->stRawInfo,pstClientData->pstFrame);
+        
+        //debug("write a raw frame size (%u),size (%u)\n",pstFrame->frameSize,pstFrame->offset);
+        if(pstRawDevice->write(&pstRawDevice->stRawInfo,pstClientData->pstFrame) < 0)
+        {
+            debug("write a raw frame error!\n");
+        }
+        
         pstClientData->pstFrame = NULL;
     }    
 }
@@ -176,7 +196,11 @@ void rawFdRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
         tClientData  *pstClientData = (tClientData  *)w_client->data;
         tRawOpr *pstRawDevice = pstClientData->pstServerData->pstRawDevice;
         
-        pstRawDevice->read(&pstRawDevice->stRawInfo);
+        if(pstRawDevice->read(&pstRawDevice->stRawInfo) < 0)
+        {
+            debug("client read device error!\n");
+            return;
+        }
 
         if(pstClientData->start)
         {
@@ -223,6 +247,9 @@ void serverAcceptRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
         return;
     }
     
+    inet_ntop(AF_INET,&(client_addr.sin_addr),pstClientData->stClientInfo.ipaddr,sizeof(pstClientData->stClientInfo.ipaddr)); 
+    pstClientData->stClientInfo.port = ntohs(client_addr.sin_port);
+    pstClientData->pstServerData = pstServerData;
     if(pstServerData->sztClinet.size != 0)
     {
         tNetMsg stNetMsg;
@@ -231,18 +258,29 @@ void serverAcceptRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
         send(client_sd,&stNetMsg,sizeof(stNetMsg),0);
         free(w_client);
         close(client_sd);       
-        debug("server busy!\n");
+        debug("server busy, (%s:%d) fd (%d) closed!\n",
+              pstClientData->stClientInfo.ipaddr, pstClientData->stClientInfo.port,client_sd);
         
         return;
     }
 
-    inet_ntop(AF_INET,&(client_addr.sin_addr),pstClientData->stClientInfo.ipaddr,sizeof(pstClientData->stClientInfo.ipaddr)); 
-    pstClientData->stClientInfo.port = ntohs(client_addr.sin_port);
-    pstClientData->pstServerData = pstServerData;
+    {
+        int recvbuff = 2*1024*1024;
+        if(setsockopt(client_sd, SOL_SOCKET, SO_SNDBUF, (const char*)&recvbuff, sizeof(int)) == -1)
+        {
+            debug("");
+        }
+        
+        if(setsockopt(client_sd, SOL_SOCKET, SO_RCVBUF, (const char*)&recvbuff, sizeof(int)) == -1)
+        {
+            debug("");
+        } 
+    }
     
     w_client->data = pstClientData;
     ev_io_init(w_client, passiveClientRead, client_sd, EV_READ);       
     ev_io_start(loop, w_client);
+    debug("%s:%d fd(%d) connected!\n", pstClientData->stClientInfo.ipaddr, pstClientData->stClientInfo.port,w_client->fd);
 
     if(pstServerData->evRawIO == NULL)
     {
@@ -261,7 +299,6 @@ void serverAcceptRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
     }      
     
     pstServerData->sztClinet.size = 1;
-    debug("%s:%d fd(%d) connected!\n", pstClientData->stClientInfo.ipaddr, pstClientData->stClientInfo.port,w_client->fd);
 }
 
 int createTcpServer()
@@ -275,6 +312,18 @@ int createTcpServer()
     int reuseFlag = 1;
     socklen_t socklen = sizeof(reuseFlag);
     setsockopt(server_sockfd, SOL_SOCKET, SO_REUSEADDR, &reuseFlag, socklen);
+    {
+        int recvbuff = 2*1024*1024;
+        if(setsockopt(server_sockfd, SOL_SOCKET, SO_SNDBUF, (const char*)&recvbuff, sizeof(int)) == -1)
+        {
+            debug("");
+        }
+        
+        if(setsockopt(server_sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&recvbuff, sizeof(int)) == -1)
+        {
+            debug("");
+        } 
+    }
 
     server_address.sin_family = AF_INET;
     server_address.sin_addr.s_addr = htonl(INADDR_ANY);
@@ -296,9 +345,6 @@ void sigpipe(int sig)
 }
 void signalCallback(EV_P_ ev_signal *w, int revents)
 {
-	//debug("server recv signal=%d\n",sig);
-	// this causes the innermost ev_run to stop iterating
-	//ev_break (EV_A_ EVBREAK_ONE);
 	if(w->signum == SIGINT)
 	{
 		debug("server recv SIGINT(%d)\n",w->signum);
@@ -340,6 +386,7 @@ int main()
     int serverfd = createTcpServer();
     struct ev_loop *loop = ev_default_loop(0);
 
+    stServerData.loop = loop;
 #ifdef M_LOCAL_TEST
     stServerData.pstRawDevice = creatVirtualDevice();
 #else
@@ -366,10 +413,13 @@ int main()
 	ev_signal_init(&evsignalpipe, signalCallback,SIGPIPE);
 	ev_signal_start (loop, &evsignalpipe);
 
+#ifdef M_LOCAL_TEST
     ev_timer evtimeout;
     evtimeout.data = &stServerData;
-    ev_timer_init (&evtimeout, getRawData, 0.001, 0.040);
+    ev_timer_init (&evtimeout, getRawData, 0.01, 0.030);
 	ev_timer_start (loop, &evtimeout);
+    
+#endif
 
     ev_run (loop, 0);
     

@@ -8,7 +8,7 @@ ALL := ser raw
 all:$(ALL)
 
 ser:server.o rawDevice.o virtualDevice.o
-	$(CC) -o $@ $^ $(LIBEV) -lm
+	$(CC) -o $@ $^ $(LIBEV) -lm -lpthread
 
 raw:rawDevice.o	raw.o
 	$(CC) -o $@ $^ $(LIBEV) -lm

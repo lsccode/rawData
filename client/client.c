@@ -152,6 +152,20 @@ int createTcpClient(char *ipaddr)
     address.sin_addr.s_addr = inet_addr(ipaddr);
     address.sin_port = htons(SERVICE_PORT);
     len = sizeof(address);
+    
+    {
+        int recvbuff = 2*1024*1024;
+        if(setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, (const char*)&recvbuff, sizeof(int)) == -1)
+        {
+            debug("set snd buf error!\n");
+        }
+        
+        if(setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&recvbuff, sizeof(int)) == -1)
+        {
+            debug("set rcv buf error!\n");
+        }
+        
+    }
 
     result = connect(sockfd, (struct sockaddr *)&address, len);
 
@@ -266,6 +280,9 @@ void clientRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
             tClientInfo  *pstClient = &pstAcClientData->stClient;
             close(watcher->fd);
             ev_io_stop(loop, watcher); 
+            debug("server closed,client exit\n");
+            exit(0);
+            
         }
         
         if(pstFrameBuf->offset >= pstFrameBuf->cap)
@@ -397,7 +414,7 @@ int main(int argc, char *argv[])
     int sockfd = createTcpClient(argv[1]);
     struct ev_io evClient;
     struct sockaddr_in addr;
-    int len;
+    int len = sizeof(addr);
     tAcClientData stAcClientData = {0};
         
     if(sockfd < 0)
@@ -408,15 +425,13 @@ int main(int argc, char *argv[])
     
     pthread_mutex_init(&stAcClientData.stFrameFreeList.mutex,NULL);
     pthread_mutex_init(&stAcClientData.stFrameUsedList.mutex,NULL);
-    debug("\n");
+    debug("client start (%s-%s)\n",__DATE__,__TIME__);
     createFrameList(&stAcClientData.stFrameFreeList);
-    debug("\n");
 
-    debug("\n");
     getpeername(sockfd, (struct sockaddr *)&addr, &len);
     inet_ntop(AF_INET,&(addr.sin_addr),stAcClientData.stClient.ipaddr,sizeof(stAcClientData.stClient.ipaddr)); 
     stAcClientData.stClient.port = ntohs(addr.sin_port);
-    
+
     debug("%s:%d fd(%d),connected!\n", stAcClientData.stClient.ipaddr, stAcClientData.stClient.port, sockfd);
     
     evClient.data = &stAcClientData;

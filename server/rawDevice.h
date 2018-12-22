@@ -42,6 +42,8 @@ typedef struct tagFrameArray
 {
     unsigned int size;
     unsigned int cap;
+    unsigned int getfailed;
+    unsigned int addfailed;
     tFrame **ppstFrame;
     char *name;
     pthread_mutex_t mutex;
@@ -57,6 +59,7 @@ typedef struct tagRawInfo
     unsigned int w;
     unsigned int h;
     unsigned int rawFrameSize;
+    unsigned int rawBufNum;
     
     tFrameArray stEmptyArray;
     tFrameArray stUsedArray;
@@ -72,6 +75,7 @@ typedef struct tagRawOpr
     int (*get)(tRawInfo *pstRawInfo,tFrame **ppstFrame);
     int (*write)(tRawInfo *pstRawInfo,tFrame *pstFrame);
     int (*close)(tRawInfo *pstRawInfo);
+    int (*log)(tRawInfo *pstRawInf);
 }tRawOpr;
 
 

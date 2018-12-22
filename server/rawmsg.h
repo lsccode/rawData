@@ -44,4 +44,9 @@ struct sensor_io_msg
     unsigned char data[128]; 
 };
 
+enum sensor_type {
+    SENSOR_TYPE_A = 1 << 0,
+    SENSOR_TYPE_B = 1 << 1
+};
+
 #endif
