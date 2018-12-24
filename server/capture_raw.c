@@ -200,6 +200,7 @@ int main(int argc, char *argv[])
 	}
 	else
 	{
+		free(rawbuf);
 		close_sensor_device(fd);
 		return 0;
 	}
@@ -208,6 +209,7 @@ int main(int argc, char *argv[])
 	if(ret)
 	{
 		printf("set_raw_buffer failed.\n");
+		free(rawbuf);
 		close_sensor_device(fd);
 		return 0;
 	}
@@ -217,6 +219,7 @@ int main(int argc, char *argv[])
 	if(ret)
 	{
 		printf("start_sensor failed.\n");
+		free(rawbuf);
 		close_sensor_device(fd);
 		return 0;
 	}
@@ -229,11 +232,11 @@ int main(int argc, char *argv[])
 		if(size != -1)
 		{
 			read_num++;
-			//printf("read buffer num:%d\n", read_num);
-			//printf("read buffer addr:0x%x\n", rawbuf->rawbuf_addr);
-			//printf("read buffer size:0x%x\n", rawbuf->rawbuf_size);
+			printf("read buffer num:%d\n", read_num);
+			printf("read buffer addr:0x%x\n", rawbuf->rawbuf_addr);
+			printf("read buffer size:0x%x\n", rawbuf->rawbuf_size);
 
-			if((read_num > 2) && (read_num < 5000))
+			if((read_num > 2) && (read_num < 40))
 			{
 				set_num = (read_num-2)%8;
 
@@ -242,16 +245,16 @@ int main(int argc, char *argv[])
 				else
 					set_num = 7;
 
-				printf("set number:%d.read number %d\n", set_num,read_num);
+				printf("set number:%d.\n", set_num);
 				rawbuf->rawbuf_size = buf_size;
 				rawbuf->rawbuf_addr = 0x9F000000 + rawbuf->rawbuf_size*set_num;
 				rawbuf->queue_num   = 1;
 
-//				printf("set buffer addr:0x%x\n", rawbuf->rawbuf_addr);
+				printf("set buffer addr:0x%x\n", rawbuf->rawbuf_addr);
 				set_raw_buffer(fd, rawbuf);
 			}
 
-			if(read_num > 5000)
+			if(read_num > 40)
 				break;
 
 		}
@@ -263,6 +266,8 @@ int main(int argc, char *argv[])
 
 	stop_sensor(fd);
 	close_sensor_device(fd);
+
+	printf("capture raw finished.\n");
 
 	return 0;
 }
