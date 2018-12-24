@@ -278,7 +278,8 @@ static int closeDevice(tRawInfo *pstRawInfo)
     
     struct sensor_io_msg sensor_msg;
 	struct sensor_msg_stop msg_stop;
-
+    tFrame *pstFrame = NULL;
+    
 	sensor_msg.header.msg_id = SENSOR_IO_MSG_STOP;
 	sensor_msg.header.msg_length = sizeof(struct sensor_msg_stop);
 
@@ -289,6 +290,19 @@ static int closeDevice(tRawInfo *pstRawInfo)
 		debug("failed to set map table: %s\n", strerror(errno));
 		return -1;
 	}
+    
+    debug("stop sensor (%d)\n",msg_stop.sensor);
+    
+    if(pstRawInfo->rawfd)
+    {
+        if(close(pstRawInfo->rawfd) != 0)
+        {
+            ret = -1;
+            debug("close rawfd error!\n");
+        }
+        debug("close rawfd (%d)\n",pstRawInfo->rawfd);
+        pstRawInfo->rawfd = -1;
+    }
     
     if(pstRawInfo->memfd > 0)
     {
@@ -304,19 +318,20 @@ static int closeDevice(tRawInfo *pstRawInfo)
             ret = -1;
             debug("close memfd error!\n");
         }
-        pstRawInfo->memfd = 0;
+        debug("close memfd (%d)\n",pstRawInfo->memfd);
+        
+        pstRawInfo->memfd = -1;
     }
     
-    if(pstRawInfo->rawfd)
+    while(!getFromArray(&pstRawInfo->stUsedArray,&pstFrame,1))
     {
-        if(close(pstRawInfo->rawfd) != 0)
+        if(addTOArray(&pstRawInfo->stEmptyArray,pstFrame) < 0)
         {
-            ret = -1;
-            debug("close rawfd error!\n");
+            debug("closed add to empty error!\n");
         }
-        pstRawInfo->rawfd = 0;
     }
     
+    debug("close device ok!\n");
 	return ret;
 }
 

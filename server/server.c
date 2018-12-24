@@ -32,6 +32,7 @@ typedef struct tagClientData
     unsigned long long totaltime; // ms
     struct timespec starttime ;
     struct timespec endtime ;
+    int errcode;
 }tClientData;
 
 void passiveClientWrite(struct ev_loop *loop, struct ev_io *watcher, int revents);
@@ -70,15 +71,16 @@ void passiveClientRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
             debug("someone disconnect fd(%d)\n", watcher->fd);
         }
         
-        close(watcher->fd);
+        
         ev_io_stop(loop,watcher);
+        close(watcher->fd);
         pstClientData->pstServerData->sztClinet.size = 0;
         free(watcher->data);
         free(watcher);
         
         ev_io_stop(loop,pstClientData->pstServerData->evRawIO);
-        free(pstClientData->pstServerData->evRawIO);
         pstClientData->pstServerData->pstRawDevice->close(&pstClientData->pstServerData->pstRawDevice->stRawInfo);
+        free(pstClientData->pstServerData->evRawIO);      
         pstClientData->pstServerData->evRawIO = NULL;
         return;
     }
@@ -146,10 +148,11 @@ void passiveClientWrite(struct ev_loop *loop, struct ev_io *watcher, int revents
     }
     else
     {
+        
         ev_io_stop(loop, watcher);
         ev_io_init(watcher, passiveClientRead, watcher->fd, EV_READ);
         ev_io_start(loop, watcher);
-
+        pstClientData->errcode = errno;
         debug("write error %s:%d, offset (%d),size (%u),curSend (%u)!\n",
               strerror(errno),errno,pstFrame->offset,pstFrame->frameSize,curSend);
         return;
@@ -204,7 +207,7 @@ void rawFdRead(struct ev_loop *loop, struct ev_io *watcher, int revents)
 
         if(pstClientData->start)
         {
-            if(w_client->events & EV_WRITE)
+            if((w_client->events & EV_WRITE) || (pstClientData->errcode != 0))
             {
                 return;
             }
