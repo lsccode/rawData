@@ -11,7 +11,7 @@ hardwrite:hardWrite.c
 	$(CC) -o $@ $^
 
 install:
-	cp -rf $(ALL) ../
+	cp -rf $(ALL) $(TARGET_DIR)	
 
 clean:
-	rm -rf *.o *.d $(ALL);cd ../;rm -rf $(ALL)
+	rm -rf *.o *.d $(ALL);cd $(TARGET_DIR);rm -rf $(ALL)

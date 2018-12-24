@@ -1,3 +1,4 @@
+TARGET_DIR := $(PWD)/output
 COMPILE_DIR := client server
 
 .PHONY:$(COMPILE_DIR)
@@ -10,3 +11,5 @@ install:
 	$(MAKE) TARGET=install
 clean:
 	$(MAKE) TARGET=clean
+
+export 	TARGET_DIR

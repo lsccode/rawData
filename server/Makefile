@@ -4,7 +4,7 @@ LIBEV := libevarm.a
 #LIBEV := libev.a
 CPPFLAGS += -I ../include
 
-ALL := ser raw
+ALL := ser raw demo 
 all:$(ALL)
 
 ser:server.o rawDevice.o virtualDevice.o
@@ -13,9 +13,12 @@ ser:server.o rawDevice.o virtualDevice.o
 raw:rawDevice.o	raw.o
 	$(CC) -o $@ $^ $(LIBEV) -lm
 
+demo:capture_raw.o
+	$(CC) -o $@ $^	
+
 install:
-	cp -rf $(ALL) ../	
+	cp -rf $(ALL) $(TARGET_DIR)	
 
 clean:
-	rm -rf *.o *.d $(ALL);cd ../;rm -rf $(ALL)
+	rm -rf *.o *.d $(ALL);cd $(TARGET_DIR);rm -rf $(ALL)
 
